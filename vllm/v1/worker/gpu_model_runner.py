@@ -1458,6 +1458,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 ),
             )
 
+            self.model.get_all_layer_caches()
+
             self.maybe_wait_for_kv_save()
             finished_sending, finished_recving = (
                 self.get_finished_kv_transfers(scheduler_output))

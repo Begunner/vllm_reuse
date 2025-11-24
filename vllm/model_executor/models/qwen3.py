@@ -124,6 +124,19 @@ class Qwen3Attention(nn.Module):
                               attn_type=attn_type)
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
+        self.q_cache = []
+        self.k_cache = []
+        self.v_cache = []
+        self.o_cache = []
+
+    def clear_caches(self):
+        self.q_cache = []
+        self.k_cache = []
+        self.v_cache = []
+        self.o_cache = []
+
+    def get_caches(self):
+        return self.q_cache, self.k_cache, self.v_cache, self.o_cache
 
     def forward(
         self,
@@ -132,6 +145,9 @@ class Qwen3Attention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        self.q_cache.append(q)
+        self.k_cache.append(k)
+        self.v_cache.append(v)
         # Add qk-norm
         q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim,
                            self.head_dim)
@@ -144,6 +160,7 @@ class Qwen3Attention(nn.Module):
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v)
         output, _ = self.o_proj(attn_output)
+        self.o_cache.append(output)
         return output
 
 
@@ -288,6 +305,8 @@ class Qwen3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors)
 
+        self.counter = 0
+
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
 
@@ -298,8 +317,12 @@ class Qwen3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
+        if input_ids.shape[0] > 1:
+            self.clear_all_layer_caches()
+            self.counter = 0
         hidden_states = self.model(input_ids, positions, intermediate_tensors,
                                    inputs_embeds)
+        self.counter += input_ids.shape[0]
         return hidden_states
 
     def compute_logits(
@@ -319,3 +342,42 @@ class Qwen3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
                            if self.config.tie_word_embeddings else None),
         )
         return loader.load_weights(weights)
+
+    def clear_all_layer_caches(self):
+        for layer in self.model.layers:
+            if isinstance(layer, PPMissingLayer):
+                continue
+            attn_module = layer.self_attn 
+            attn_module.clear_caches()
+
+    def get_all_layer_caches(self):
+        if self.counter == 1024:
+            # all_caches = []
+            all_q_caches = []
+            all_k_caches = []
+            all_v_caches = []
+            all_o_caches = []
+            for i, layer in enumerate(self.model.layers):
+                if isinstance(layer, PPMissingLayer):
+                    continue
+                attn_module = layer.self_attn 
+
+                q_cache, k_cache, v_cache, o_cache = attn_module.get_caches()
+
+                q_cache = torch.cat(q_cache, dim=0)
+                k_cache = torch.cat(k_cache, dim=0)
+                v_cache = torch.cat(v_cache, dim=0)
+                o_cache = torch.cat(o_cache, dim=0)
+                all_q_caches.append(q_cache)
+                all_k_caches.append(k_cache)
+                all_v_caches.append(v_cache)
+                all_o_caches.append(o_cache)
+            all_q_caches = torch.stack(all_q_caches, dim=0)
+            all_k_caches = torch.stack(all_k_caches, dim=0)
+            all_v_caches = torch.stack(all_v_caches, dim=0)
+            all_o_caches = torch.stack(all_o_caches, dim=0)
+            torch.save(all_q_caches, "q_caches.pt")
+            torch.save(all_k_caches, "k_caches.pt")
+            torch.save(all_v_caches, "v_caches.pt")
+            torch.save(all_o_caches, "o_caches.pt")
+
