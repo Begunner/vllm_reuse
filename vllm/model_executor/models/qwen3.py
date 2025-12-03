@@ -351,7 +351,7 @@ class Qwen3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
             attn_module.clear_caches()
 
     def get_all_layer_caches(self):
-        if self.counter == 1024:
+        if self.counter == 16:
             # all_caches = []
             all_q_caches = []
             all_k_caches = []

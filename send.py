@@ -7,7 +7,7 @@ VLLM_API_BASE = "http://localhost:8000/v1"
 MODEL_NAME = "/mnt/model/Qwen3-14B/" 
 
 PROMPTS = [
-    "Hello " * 1000,
+    "Once upon a time, ",
 ]
 
 async def async_generate_completion(client: AsyncOpenAI, prompt: str, index: int):
@@ -15,19 +15,17 @@ async def async_generate_completion(client: AsyncOpenAI, prompt: str, index: int
     start_time = time.time()
     
     try:
-        response = await client.chat.completions.create(
+        response = await client.completions.create(
             model=MODEL_NAME,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=30,
+            prompt=prompt, 
+            max_tokens=11,
             temperature=0.7,
         )
 
         end_time = time.time()
         
         if response.choices:
-            content = response.choices[0].message.content
+            content = response.choices[0].text
             print(f"[{index}] Response (time: {end_time - start_time:.2f}s):")
             print(f"[{index}] Content: {content.strip()[:60]}...")
             
